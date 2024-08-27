@@ -1,4 +1,3 @@
-# JavaScript DApp Template
+# Automated salary distribution system DApp
 
-This is a template for JavaScript Cartesi DApps. It uses node to execute the backend application.
-The application entrypoint is the `src/index.js` file. It is bundled with [esbuild](https://esbuild.github.io), but any bundler can be used.
+The Automated Salary Distribution System is a Cartesi-based application designed to streamline the process of salary distribution within an organization. This system securely deducts the appropriate salary amounts from a company's account and distributes them to employees, ensuring accuracy, transparency, and efficiency.
