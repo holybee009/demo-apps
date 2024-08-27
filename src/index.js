@@ -3,6 +3,7 @@
 const { ethers } = require("ethers");
 const { CartesiRollups } = require('@cartesi/rollups');
 const app = new CartesiRollups();
+const moment = require('moment'); // Import moment.js for date handling
 
 const rollup_server = process.env.ROLLUP_HTTP_SERVER_URL;
 console.log("HTTP rollup_server url is " + rollup_server);
@@ -31,8 +32,20 @@ function isNumeric(num) {
   return !isNaN(num)
 }
 
+
+// Function to check if today is the end of the month
+function isEndOfMonth() {
+  const today = moment();
+  return today.isSame(today.endOf('month'), 'day');
+}
+
 // Function to distribute salary and deduct it from the company account
 function distributeSalary(employeeId) {
+  // Check if today is the end of the month
+  if (!isEndOfMonth()) {
+      return 'Salary distribution is only allowed at the end of the month';
+  }
+
   // Find the employee by ID
   const employee = employees.find(emp => emp.id === employeeId);
 
