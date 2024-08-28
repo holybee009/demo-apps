@@ -1,163 +1,159 @@
 // XXX even though ethers is not used in the code below, it's very likely
 // it will be used by any DApp, so we are already including it here
 const { ethers } = require("ethers");
-const { CartesiRollups } = require('@cartesi/rollups');
-const app = new CartesiRollups();
-const moment = require('moment'); // Import moment.js for date handling
 
-const rollup_server = process.env.ROLLUP_HTTP_SERVER_URL;
-console.log("HTTP rollup_server url is " + rollup_server);
 
-// In-memory company account
-let companyAccount = {
-  balance: 50000 // Company balance in some currency unit
-};
+// In-memory database for storing users and their subscription status
+let users = {};
 
-// In-memory list of employees
-let employees = [
-  { id: 1, name: 'John Doe', salary: 5000 },
-  { id: 2, name: 'Jane Smith', salary: 6000 },
-  { id: 3, name: 'Alice Johnson', salary: 7000 }
-];
 
-function hexTostring(hex) {
-  return ethers.toUtf8string(hex)
+function hex2Object(hex) {
+  const utf8String = ethers.toUtf8String(hex);
+
+  return JSON.parse(utf8String);
 }
 
-function stringTohex(payload) {
-  return ethers.toUtf8bytes(payload)
+function obj2Hex(obj) {
+  const jsonString = JSON.stringify(obj);
+
+  const hexString = ethers.hexlify(ethers.toUtf8Bytes(jsonString));
+
+  return hexString;
 }
 
 function isNumeric(num) {
   return !isNaN(num)
 }
 
-
-// Function to check if today is the end of the month
-function isEndOfMonth() {
-  const today = moment();
-  return today.isSame(today.endOf('month'), 'day');
+// Function to subscribe a user
+function subscribeUser(userId, amount) {
+    if (!users[userId]) {
+        users[userId] = { subscribed: true, expiryDate: getExpiryDate(), balance: amount };
+        return `User ${userId} successfully subscribed. Subscription valid until ${users[userId].expiryDate}.`;
+    } else {
+        return `User ${userId} is already subscribed.`;
+    }
 }
 
-// Function to distribute salary and deduct it from the company account
-function distributeSalary(employeeId) {
-  // Check if today is the end of the month
-  if (!isEndOfMonth()) {
-      return 'Salary distribution is only allowed at the end of the month';
-  }
-
-  // Find the employee by ID
-  const employee = employees.find(emp => emp.id === employeeId);
-
-  // Check if the employee exists
-  if (!employee) {
-      return 'Employee not found';
-  }
-
-  // Check if the company has sufficient funds
-  if (companyAccount.balance >= employee.salary) {
-      companyAccount.balance -= employee.salary; // Deduct salary from company balance
-      return `Salary of ${employee.salary} distributed to ${employee.name}. New company balance: ${companyAccount.balance}`;
-  } else {
-      return 'Insufficient funds in company account';
-  }
+// Function to check subscription status
+function checkSubscription(userId) {
+    if (!users[userId]) {
+        return `User ${userId} is not subscribed.`;
+    }
+    
+    const currentDate = new Date();
+    if (new Date(users[userId].expiryDate) > currentDate) {
+        return `User ${userId} is subscribed until ${users[userId].expiryDate}.`;
+    } else {
+        users[userId].subscribed = false;
+        return `User ${userId}'s subscription has expired.`;
+    }
 }
 
-// Function to increase the company's balance
-function addFunds(amount) {
-  // Validate the amount to ensure it's positive
-  if (amount <= 0) {
-      return 'Invalid amount';
-  }
-  companyAccount.balance += amount; // Add funds to company balance
-  return `Added ${amount} to company balance. New balance: ${companyAccount.balance}`;
+// Function to process payment and extend subscription
+function processPayment(userId, amount) {
+    if (!users[userId]) {
+        return `User ${userId} is not subscribed. Please subscribe first.`;
+    }
+
+    if (amount < 10) {
+        return `Insufficient amount. Minimum amount required is 10.`;
+    }
+
+    users[userId].expiryDate = extendExpiryDate(users[userId].expiryDate);
+    users[userId].balance += amount;
+    return `Payment of ${amount} received. Subscription extended until ${users[userId].expiryDate}.`;
+}
+
+// Helper function to get the expiry date (one month from today)
+function getExpiryDate() {
+    const currentDate = new Date();
+    currentDate.setMonth(currentDate.getMonth() + 1);
+    return currentDate.toISOString().split('T')[0];
+}
+
+// Helper function to extend the expiry date by one month
+function extendExpiryDate(currentExpiryDate) {
+    const newExpiryDate = new Date(currentExpiryDate);
+    newExpiryDate.setMonth(newExpiryDate.getMonth() + 1);
+    return newExpiryDate.toISOString().split('T')[0];
 }
 
 // Rollup input handler
-app.handleInput(async (input) => {
-  // Split the input payload into command and parameter
-  const [command, param] = input.payload.split(':');
+async function handleInput (input) {
+    const [command, userId, amount] = input.payload.split(" ");
+    let response;
 
-  if (command === 'salary') {
-      // Handle salary distribution command
-      const employeeId = parseInt(param); // Convert parameter to integer
+    switch (command) {
+        case "subscribe":
+            response = subscribeUser(userId, parseFloat(amount));
+            break;
+        case "check":
+            response = checkSubscription(userId);
+            break;
+        case "pay":
+            response = processPayment(userId, parseFloat(amount));
+            break;
+        default:
+            response = "Invalid command. Use 'subscribe', 'check', or 'pay'.";
+    }
 
-      // Check if employee ID is valid
-      if (isNaN(employeeId)) {
-          await input.sendResponse('Invalid employee ID');
-          return;
-      }
-
-      // Distribute salary and send response
-      const result = distributeSalary(employeeId);
-      await input.sendResponse(result);
-
-  } else if (command === 'addFunds') {
-      // Handle add funds command
-      const amount = parseFloat(param); // Convert parameter to float
-
-      // Check if amount is valid
-      if (isNaN(amount)) {
-          await input.sendResponse('Invalid amount');
-          return;
-      }
-
-      // Add funds and send response
-      const result = addFunds(amount);
-      await input.sendResponse(result);
-
-  } else {
-      // Handle unknown commands
-      await input.sendResponse('Unknown command');
-  }
-});
+    await input.sendResponse(response);
+};
 
 let user = []
-let toUpperTotal = 0
+let total_operations = 0;
+
 async function handle_advance(data) {
   console.log("Received advance request data " + JSON.stringify(data));
 
   const metadata = data['metadata']
   const sender = metadata['msg_sender']
-  const payload = data['payload ']
+  const payload = data['payload']
 
-  let sentence = hexTostring(payload)
-  if (isNumeric(sentence)){
-    //add error input
+  let subscription_input = hex2Object(payload)
+
+  if (isNumeric(sentence)) {
     const report_req = await fetch(rollup_server + "/report", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ payload: str2hex["sentence is not on hex format"] }),
+      body: JSON.stringify({ payload: obj2Hex("Object is not in hex format") }),
     });
-    return 'reject'
+
+    return "reject"
   }
-  user.push(sender)
-  toUpperTotal += 1
-  sentence = sentence.toUpperCase()
-  
-  const notice_req = await fetch(rollup_server + "/report", {
+
+  users.push(sender)
+  total_operations += 1
+
+  const subscription_output = handleInput(subscription_input)
+
+  const notice_req = await fetch(rollup_server + "/notice", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({ payload: str2hex(sentence) }),
+    body: JSON.stringify({ payload: obj2Hex(subscription_output) }),
   });
   return "accept";
 }
 
 async function handle_inspect(data) {
   console.log("Received inspect request data " + JSON.stringify(data));
-  const payload = data['payload']
 
+  const payload = data['payload']
   const route = hex2str(payload)
+
   let responseObject = {}
-  if (route === 'List') {
-    responseObject = JSON.stringify({user})
-  } else if (route === 'total') {
-responseObject = JSON.stringify({toUpperTotal})
-  } else { responseObject = 'route not implemented'}
+  if (route === "list") {
+    responseObject = JSON.stringify({ user })
+  } else if (route === "total") {
+    responseObject = JSON.stringify({ total_operations })
+  } else {
+    responseObject = "route not implemented"
+  }
 
   const report_req = await fetch(rollup_server + "/report", {
     method: "POST",
@@ -166,6 +162,7 @@ responseObject = JSON.stringify({toUpperTotal})
     },
     body: JSON.stringify({ payload: str2hex(responseObject) }),
   });
+
   return "accept";
 }
 
