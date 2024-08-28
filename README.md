@@ -1,3 +1,3 @@
 # Online subscription service DApp
 
-The Automated Salary Distribution System is a Cartesi-based application designed to streamline the process of salary distribution within an organization. This system securely deducts the appropriate salary amounts from a company's account and distributes them to employees, ensuring accuracy, transparency, and efficiency.
+This project is an online subscription service built on Cartesi, providing a decentralized and transparent way to manage subscriptions. The service allows users to subscribe to various services and automatically handle payments using blockchain technology, ensuring secure and verifiable transactions. The system is designed to operate with smart contracts, offering automated and trustless subscription management.
