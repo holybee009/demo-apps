@@ -28,6 +28,8 @@
   dependencies:
     viem "^2.17.4"
 
+    
+
 "@deroll/wallet@^0.8.1":
   version "0.8.1"
   resolved "https://registry.npmjs.org/@deroll/wallet/-/wallet-0.8.1.tgz"
