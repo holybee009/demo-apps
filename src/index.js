@@ -1,192 +1,174 @@
 const { ethers } = require("ethers");
-const { toUtf8String, hexlify, toUtf8Bytes } = ethers.utils;
-const fetch = require('node-fetch');
+const moment = require('moment'); // Import moment.js for date handling
 
-// In-memory database for storing users and their subscription status
-let users = {};
+const rollup_server = process.env.ROLLUP_HTTP_SERVER_URL;
+console.log("HTTP rollup_server url is " + rollup_server);
 
-// Helper functions for hex conversion
-function hex2Object(hex) {
-  const utf8String = toUtf8String(hex);
-  return JSON.parse(utf8String);
+// In-memory database for auctions and bids
+let auctions = [];
+
+// Function to start a new auction
+function startAuction(itemId, startingBid, duration) {
+    const endTime = moment().add(duration, 'minutes').toISOString(); // Set auction end time
+    const auction = {
+        itemId,
+        startingBid,
+        highestBid: startingBid,
+        highestBidder: null,
+        endTime,
+        bids: []
+    };
+    auctions.push(auction);
+    return `Auction for item ${itemId} started with starting bid of ${startingBid}. Auction ends at ${endTime}.`;
 }
 
-function obj2Hex(obj) {
-  const jsonString = JSON.stringify(obj);
-  return hexlify(toUtf8Bytes(jsonString));
+// Function to place a bid
+function placeBid(auctionId, bidder, amount) {
+    const auction = auctions.find(auc => auc.itemId === auctionId);
+
+    if (!auction) {
+        return 'Auction not found';
+    }
+
+    const currentTime = moment();
+    if (currentTime.isAfter(moment(auction.endTime))) {
+        return 'Auction has already ended.';
+    }
+
+    if (amount <= auction.highestBid) {
+        return `Bid amount must be higher than the current highest bid of ${auction.highestBid}.`;
+    }
+
+    auction.highestBid = amount;
+    auction.highestBidder = bidder;
+    auction.bids.push({ bidder, amount, time: currentTime.toISOString() });
+    return `Bid of ${amount} placed by ${bidder} on item ${auction.itemId}. Current highest bid is ${auction.highestBid}.`;
 }
 
-function isNumeric(num) {
-  return !isNaN(num);
-}
+// Function to end an auction and declare the winner
+function endAuction(auctionId) {
+    const auction = auctions.find(auc => auc.itemId === auctionId);
 
-// Function to subscribe a user
-function subscribeUser(userId, amount) {
-  if (!users[userId]) {
-    users[userId] = { subscribed: true, expiryDate: getExpiryDate(), balance: amount };
-    return `User ${userId} successfully subscribed. Subscription valid until ${users[userId].expiryDate}.`;
-  } else {
-    return `User ${userId} is already subscribed.`;
-  }
-}
+    if (!auction) {
+        return 'Auction not found';
+    }
 
-// Function to check subscription status
-function checkSubscription(userId) {
-  if (!users[userId]) {
-    return `User ${userId} is not subscribed.`;
-  }
-  
-  const currentDate = new Date();
-  if (new Date(users[userId].expiryDate) > currentDate) {
-    return `User ${userId} is subscribed until ${users[userId].expiryDate}.`;
-  } else {
-    users[userId].subscribed = false;
-    return `User ${userId}'s subscription has expired.`;
-  }
-}
+    const currentTime = moment();
+    if (currentTime.isBefore(moment(auction.endTime))) {
+        return 'Auction cannot be ended before the scheduled time.';
+    }
 
-// Function to process payment and extend subscription
-function processPayment(userId, amount) {
-  if (!users[userId]) {
-    return `User ${userId} is not subscribed. Please subscribe first.`;
-  }
-
-  if (amount < 10) {
-    return `Insufficient amount. Minimum amount required is 10.`;
-  }
-
-  users[userId].expiryDate = extendExpiryDate(users[userId].expiryDate);
-  users[userId].balance += amount;
-  return `Payment of ${amount} received. Subscription extended until ${users[userId].expiryDate}.`;
-}
-
-// Helper function to get the expiry date (one month from today)
-function getExpiryDate() {
-  const currentDate = new Date();
-  currentDate.setMonth(currentDate.getMonth() + 1);
-  return currentDate.toISOString().split('T')[0];
-}
-
-// Helper function to extend the expiry date by one month
-function extendExpiryDate(currentExpiryDate) {
-  const newExpiryDate = new Date(currentExpiryDate);
-  newExpiryDate.setMonth(newExpiryDate.getMonth() + 1);
-  return newExpiryDate.toISOString().split('T')[0];
+    const winner = auction.highestBidder ? `Winner is ${auction.highestBidder} with a bid of ${auction.highestBid}.` : 'No bids were placed.';
+    auctions = auctions.filter(auc => auc.itemId !== auctionId); // Remove the auction after it ends
+    return `Auction for item ${auction.itemId} ended. ${winner}`;
 }
 
 // Rollup input handler
-async function handleInput(input) {
-  const [command, userId, amount] = input.payload.split(" ");
-  let response;
+async function handleAuction (input) {
+    const [command, itemId, param1, param2] = input.payload.split(':');
 
-  switch (command) {
-    case "subscribe":
-      response = subscribeUser(userId, parseFloat(amount));
-      break;
-    case "check":
-      response = checkSubscription(userId);
-      break;
-    case "pay":
-      response = processPayment(userId, parseFloat(amount));
-      break;
-    default:
-      response = "Invalid command. Use 'subscribe', 'check', or 'pay'.";
-  }
+    let response;
+    switch (command) {
+        case 'start':
+            const startingBid = parseFloat(param1);
+            const duration = parseInt(param2);
+            if (isNaN(startingBid) || isNaN(duration)) {
+                response = 'Invalid starting bid or duration.';
+            } else {
+                response = startAuction(itemId, startingBid, duration);
+            }
+            break;
+        case 'bid':
+            const bidder = param1;
+            const amount = parseFloat(param2);
+            if (isNaN(amount)) {
+                response = 'Invalid bid amount.';
+            } else {
+                response = placeBid(itemId, bidder, amount);
+            }
+            break;
+        case 'end':
+            response = endAuction(itemId);
+            break;
+        default:
+            response = 'Unknown command. Use "start", "bid", or "end".';
+    }
 
-  await input.sendResponse(response);
+    await input.sendResponse(response);
 };
 
-let user = [];
-let total_operations = 0;
-const rollup_server = "http://localhost:5000"; // Example server URL
-
+// Rollup advance state handler
 async function handle_advance(data) {
-  console.log("Received advance request data " + JSON.stringify(data));
+    console.log("Received advance request data " + JSON.stringify(data));
 
-  const metadata = data['metadata'];
-  const sender = metadata['msg_sender'];
-  const payload = data['payload'];
+    const metadata = data['metadata'];
+    const sender = metadata['msg_sender'];
+    const payload = data['payload'];
 
-  let subscription_input = hex2Object(payload);
+    let auction_input = hex2Object(payload);
 
-  if (typeof subscription_input !== 'object') {
-    const report_req = await fetch(rollup_server + "/report", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ payload: obj2Hex("Object is not in hex format") }),
+    const auction_output = handleAuction(auction_input);
+
+    const notice_req = await fetch(rollup_server + "/notice", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ payload: obj2Hex(auction_output) }),
     });
-
-    return "reject";
-  }
-
-  users[sender] = subscription_input;
-  total_operations += 1;
-
-  const subscription_output = await handleInput(subscription_input);
-
-  const notice_req = await fetch(rollup_server + "/notice", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ payload: obj2Hex(subscription_output) }),
-  });
-  return "accept";
+    return "accept";
 }
 
+// Rollup inspect state handler
 async function handle_inspect(data) {
-  console.log("Received inspect request data " + JSON.stringify(data));
+    console.log("Received inspect request data " + JSON.stringify(data));
 
-  const payload = data['payload'];
-  const route = hex2str(payload);
+    const payload = data['payload'];
+    const route = hex2str(payload);
 
-  let responseObject = {};
-  if (route === "list") {
-    responseObject = JSON.stringify({ user });
-  } else if (route === "total") {
-    responseObject = JSON.stringify({ total_operations });
-  } else {
-    responseObject= "route not implemented"
-  }
+    let responseObject = {};
+    if (route === 'auctions') {
+        responseObject = JSON.stringify({ auctions });
+    } else {
+        responseObject = 'Route not implemented';
+    }
 
-  const report_req = await fetch(rollup_server + "/report", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ payload: str2hex(responseObject) }),
-  });
+    const report_req = await fetch(rollup_server + "/report", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ payload: str2hex(responseObject) }),
+    });
 
-  return "accept";
+    return "accept";
 }
 
 var handlers = {
-  advance_state: handle_advance,
-  inspect_state: handle_inspect,
+    advance_state: handle_advance,
+    inspect_state: handle_inspect,
 };
 
 var finish = { status: "accept" };
 
 (async () => {
-  while (true) {
-    const finish_req = await fetch(rollup_server + "/finish", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ status: "accept" }),
-    });
+    while (true) {
+        const finish_req = await fetch(rollup_server + "/finish", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ status: "accept" }),
+        });
 
-    console.log("Received finish status " + finish_req.status);
+        console.log("Received finish status " + finish_req.status);
 
-    if (finish_req.status == 202) {
-      console.log("No pending rollup request, trying again");
-    } else {
-      const rollup_req = await finish_req.json();
-      var handler = handlers[rollup_req["request_type"]];
-      finish["status"] = await handler(rollup_req["data"]);
+        if (finish_req.status == 202) {
+            console.log("No pending rollup request, trying again");
+        } else {
+            const rollup_req = await finish_req.json();
+            var handler = handlers[rollup_req["request_type"]];
+            finish["status"] = await handler(rollup_req["data"]);
+        }
     }
-  }
 })();

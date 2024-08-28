@@ -1,3 +1,5 @@
-# Online subscription service DApp
+# online auction system
 
-This project is an online subscription service built on Cartesi, providing a decentralized and transparent way to manage subscriptions. The service allows users to subscribe to various services and automatically handle payments using blockchain technology, ensuring secure and verifiable transactions. The system is designed to operate with smart contracts, offering automated and trustless subscription management.
+A simple online auction system built using Cartesi Rollups, enabling users to start auctions, place bids, and declare winners in a decentralized environment.
+
+
